@@ -80,5 +80,5 @@ func main() {
 		sendPayment(w, r, producer)
 	})
 
-	http.ListenAndServe(":8080", router)
+	http.ListenAndServe(ProducerPort, router)
 }

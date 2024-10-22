@@ -6,45 +6,23 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sync"
 
 	"github.com/IBM/sarama"
-	"github.com/Le0nar/event-sourcing-kafka/read-service/internal/models"
+	"github.com/Le0nar/event-sourcing-kafka/notification-service/internal/models"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
-	"github.com/go-chi/render"
+	"github.com/google/uuid"
 )
 
 const (
     ConsumerGroup      = "payments-group"
     ConsumerTopic      = "payments"
-    ConsumerPort       = ":8081"
+    ConsumerPort       = ":8082"
     KafkaServerAddress = "localhost:9092"
 )
 
-type UserPayments map[string][]models.Message
-
-
-type PaymentStore struct {
-    data UserPayments
-    mu   sync.RWMutex
-}
-
-func (ns *PaymentStore) Add(userID string,
-    notification models.Message) {
-    ns.mu.Lock()
-    defer ns.mu.Unlock()
-    ns.data[userID] = append(ns.data[userID], notification)
-}
-
-func (ns *PaymentStore) Get(userID string) []models.Message {
-    ns.mu.RLock()
-    defer ns.mu.RUnlock()
-    return ns.data[userID]
-}
 
 type Consumer struct {
-    store *PaymentStore
 }
 
 func (*Consumer) Setup(sarama.ConsumerGroupSession) error   { return nil }
@@ -52,17 +30,24 @@ func (*Consumer) Cleanup(sarama.ConsumerGroupSession) error { return nil }
 func (consumer *Consumer) ConsumeClaim(
     sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
     for msg := range claim.Messages() {
-        userID := string(msg.Key)
-        var notification models.Message
-        err := json.Unmarshal(msg.Value, &notification)
+        var message models.Message
+        err := json.Unmarshal(msg.Value, &message)
         if err != nil {
-            log.Printf("failed to unmarshal notification: %v", err)
+            log.Printf("failed to unmarshal message: %v", err)
             continue
         }
-        consumer.store.Add(userID, notification)
+        
+		fakeSendMessage(message.UserId, message.Status)
+
         sess.MarkMessage(msg, "")
     }
     return nil
+}
+
+
+func fakeSendMessage(userId uuid.UUID, status string)  {
+	fmt.Printf("userId: %v\n", userId)
+	fmt.Printf("status: %v\n", status)
 }
 
 func initializeConsumerGroup() (sarama.ConsumerGroup, error) {
@@ -76,7 +61,7 @@ func initializeConsumerGroup() (sarama.ConsumerGroup, error) {
     return consumerGroup, nil
 }
 
-func setupConsumerGroup(ctx context.Context, store *PaymentStore) {
+func setupConsumerGroup(ctx context.Context) {
     consumerGroup, err := initializeConsumerGroup()
     if err != nil {
         log.Printf("initialization error: %v", err)
@@ -84,7 +69,6 @@ func setupConsumerGroup(ctx context.Context, store *PaymentStore) {
     defer consumerGroup.Close()
 
     consumer := &Consumer{
-        store: store,
     }
 
     for {
@@ -95,31 +79,13 @@ func setupConsumerGroup(ctx context.Context, store *PaymentStore) {
     }
 }
 
-
-func getPayments(w http.ResponseWriter, r *http.Request, store *PaymentStore)  {
-	userID := chi.URLParam(r, "userID")
-
-
-    messages := store.Get(userID)
-
-	render.JSON(w, r, messages)
-}
-
 func main() {
-	store := &PaymentStore{
-        data: make(UserPayments),
-    }
-
     ctx, cancel := context.WithCancel(context.Background())
-    go setupConsumerGroup(ctx, store)
+    go setupConsumerGroup(ctx)
     defer cancel()
 
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
-
-	router.Get("/payment/{userID}", func (w http.ResponseWriter, r *http.Request)  {
-		getPayments(w, r, store)
-	})
 
 	http.ListenAndServe(ConsumerPort, router)
 }
