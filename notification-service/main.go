@@ -15,7 +15,7 @@ import (
 )
 
 const (
-    ConsumerGroup      = "payments-group"
+    ConsumerGroup      = "payments-group_2"
     ConsumerTopic      = "payments"
     ConsumerPort       = ":8082"
     KafkaServerAddress = "localhost:9092"
